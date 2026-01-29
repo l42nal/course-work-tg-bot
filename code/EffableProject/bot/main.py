@@ -8,15 +8,19 @@ from typing import Set
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 
-from .config import BOT_TOKEN
 from .scheduler import daily_question_scheduler
 
+from dotenv import load_dotenv
 
+import os
 # Простое множество для хранения ID пользователей,
 # которые хотя бы раз написали боту.
 #
 # Важно: при перезапуске бота это множество очищается,
 # так как оно хранится только в памяти.
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 known_users: Set[int] = set()
 
 
