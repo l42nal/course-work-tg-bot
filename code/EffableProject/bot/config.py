@@ -7,5 +7,5 @@
 
 # TODO: замени эту строку на реальный токен своего бота.
 # Токен должен быть только здесь и больше нигде в коде.
-BOT_TOKEN = "8450389490:AAF-lhLsAGfzDiZUMWdovxzEJUIN0fBsK7A"
+BOT_TOKEN = "PUT_YOUR_TOKEN_HERE"
 
