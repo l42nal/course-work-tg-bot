@@ -9,6 +9,10 @@ import os
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List
+import time
+
+_last_request_time: Dict[int, float] = {}
+MIN_REQUEST_INTERVAL = 3
 
 from openai import AsyncOpenAI
 
@@ -129,6 +133,13 @@ async def get_response(user_id: int, user_text: str) -> str:
     Отправляет сообщение пользователя в LLM и возвращает ответ.
     Использует summary + recent для управления контекстом.
     """
+    now = time.time()
+    last = _last_request_time.get(user_id, 0)
+
+    if now - last < MIN_REQUEST_INTERVAL:
+        return "Подожди пару секунд перед следующим сообщением 🙂"
+
+    _last_request_time[user_id] = now
     if _client is None:
         return (
             "Спасибо за сообщение! К сожалению, AI-ассистент сейчас недоступен. "
