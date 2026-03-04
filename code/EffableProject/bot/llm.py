@@ -1,20 +1,32 @@
 """
 Модуль для взаимодействия с LLM через OpenRouter API.
 
-Хранит историю диалогов в памяти и отправляет сообщения
-пользователя в LLM с системным промтом «мягкого психолога».
+Хранит историю диалогов в памяти: summary (сжатое резюме старых сообщений)
+и recent (последние сообщения). Периодически сжимает историю через LLM.
 """
 
 import os
 import logging
-from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Dict, List
 
 from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
-MAX_HISTORY_MESSAGES = 40
+RECENT_MESSAGES = 18
+SUMMARY_MAX_CHARS = 1200
+
+SUMMARY_PROMPT = (
+    "Сожми следующий фрагмент диалога в краткое резюме.\n"
+    "Требования:\n"
+    "- 5–10 пунктов (можно списком)\n"
+    "- Сохрани факты и эмоции пользователя\n"
+    "- Не добавляй выдуманную информацию\n"
+    "- Только факты из диалога, без советов\n"
+    "- Максимум {max_chars} символов.\n\n"
+    "Фрагмент диалога:\n"
+)
 
 SYSTEM_PROMPT = (
     "Ты — тёплый и внимательный собеседник, похожий на чуткого психолога. "
@@ -39,7 +51,56 @@ SYSTEM_PROMPT = (
 _client: AsyncOpenAI | None = None
 _model: str = ""
 
-_histories: Dict[int, List[dict]] = defaultdict(list)
+
+@dataclass
+class Memory:
+    """Память пользователя: резюме старых сообщений + последние сообщения."""
+    summary: str = ""
+    recent: List[dict] = field(default_factory=list)
+
+
+_memories: Dict[int, Memory] = {}
+
+
+def _get_memory(user_id: int) -> Memory:
+    if user_id not in _memories:
+        _memories[user_id] = Memory()
+    return _memories[user_id]
+
+
+def _format_messages_for_summary(messages: List[dict]) -> str:
+    parts = []
+    for m in messages:
+        role = "Пользователь" if m["role"] == "user" else "Ассистент"
+        parts.append(f"{role}: {m['content']}")
+    return "\n\n".join(parts)
+
+
+async def _summarize(
+    messages: List[dict], existing_summary: str, user_id: int = 0
+) -> str:
+    """Сжимает сообщения в краткое резюме через LLM."""
+    text = _format_messages_for_summary(messages)
+    if existing_summary:
+        prompt = (
+            f"Текущее резюме разговора:\n{existing_summary}\n\n"
+            f"Дополнительные сообщения для включения в резюме:\n{text}"
+        )
+    else:
+        prompt = text
+
+    full_prompt = SUMMARY_PROMPT.format(max_chars=SUMMARY_MAX_CHARS) + prompt
+
+    try:
+        response = await _client.chat.completions.create(
+            model=_model,
+            messages=[{"role": "user", "content": full_prompt}],
+        )
+        summary = (response.choices[0].message.content or "").strip()
+        return summary[:SUMMARY_MAX_CHARS]
+    except Exception:
+        logger.exception("Ошибка при суммаризации для user_id=%s", user_id)
+        return existing_summary
 
 
 def init_llm() -> None:
@@ -54,7 +115,7 @@ def init_llm() -> None:
         _client = None
         return
 
-    _model = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+    _model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat")
 
     _client = AsyncOpenAI(
         base_url="https://openrouter.ai/api/v1",
@@ -66,7 +127,7 @@ def init_llm() -> None:
 async def get_response(user_id: int, user_text: str) -> str:
     """
     Отправляет сообщение пользователя в LLM и возвращает ответ.
-    Поддерживает контекст диалога (до MAX_HISTORY_MESSAGES сообщений).
+    Использует summary + recent для управления контекстом.
     """
     if _client is None:
         return (
@@ -74,27 +135,36 @@ async def get_response(user_id: int, user_text: str) -> str:
             "Я буду спрашивать тебя каждый день в 21:00, как прошел твой день."
         )
 
-    history = _histories[user_id]
-    history.append({"role": "user", "content": user_text})
+    mem = _get_memory(user_id)
+    mem.recent.append({"role": "user", "content": user_text})
 
-    if len(history) > MAX_HISTORY_MESSAGES:
-        history[:] = history[-MAX_HISTORY_MESSAGES:]
+    if len(mem.recent) > RECENT_MESSAGES:
+        to_summarize = mem.recent[: len(mem.recent) - RECENT_MESSAGES]
+        mem.recent = mem.recent[-RECENT_MESSAGES:]
+        mem.summary = await _summarize(to_summarize, mem.summary, user_id)
+        mem.summary = mem.summary[:SUMMARY_MAX_CHARS]
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+    system_content = SYSTEM_PROMPT
+    if mem.summary:
+        system_content += f"\n\nКонтекст предыдущего разговора:\n{mem.summary}"
+
+    messages = [{"role": "system", "content": system_content}] + mem.recent
 
     try:
         response = await _client.chat.completions.create(
             model=_model,
             messages=messages,
+            temperature=0.7,
+            max_tokens=200,
         )
         assistant_text = response.choices[0].message.content or ""
-        history.append({"role": "assistant", "content": assistant_text})
+        mem.recent.append({"role": "assistant", "content": assistant_text})
         return assistant_text
 
     except Exception:
         logger.exception("Ошибка при запросе к LLM для user_id=%s", user_id)
-        if history and history[-1]["role"] == "user":
-            history.pop()
+        if mem.recent and mem.recent[-1]["role"] == "user":
+            mem.recent.pop()
         return (
             "Прости, произошла ошибка при обработке сообщения. "
             "Попробуй написать ещё раз чуть позже."
