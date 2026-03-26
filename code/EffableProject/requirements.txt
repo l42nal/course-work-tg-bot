@@ -1,3 +1,7 @@
 aiogram
 python-dotenv
 openai
+SQLAlchemy>=2.0
+asyncpg
+alembic
+greenlet

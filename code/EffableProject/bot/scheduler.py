@@ -8,10 +8,15 @@
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Set
 
 from aiogram import Bot
+
+from sqlalchemy import select
+
+from .db.models import DailyCheckIn, User
+from .db.session import session_scope
 
 
 DAILY_MESSAGE_TEXT = "Привет! Как прошел твой день?"
@@ -60,17 +65,74 @@ async def daily_question_scheduler(bot: Bot, user_ids: Set[int]) -> None:
         # Ждем до нужного времени
         await asyncio.sleep(seconds_to_sleep)
 
+        checkin_date = datetime.now().date()
+
         # После ожидания пытаемся отправить сообщение всем пользователям
         # На этом этапе user_ids уже может содержать новых пользователей,
         # которые написали боту после запуска.
         for user_id in list(user_ids):
+            # Минимальная защита от дублей: если уже отправляли на эту дату,
+            # повторно не пишем.
+            async with session_scope() as session:
+                user = (
+                    await session.execute(
+                        select(User).where(User.telegram_user_id == user_id)
+                    )
+                ).scalar_one_or_none()
+                if user is None:
+                    continue
+
+                daily = (
+                    await session.execute(
+                        select(DailyCheckIn).where(
+                            DailyCheckIn.user_id == user.id,
+                            DailyCheckIn.checkin_date == checkin_date,
+                        )
+                    )
+                ).scalar_one_or_none()
+
+                if daily is not None and daily.status in {"sent", "answered", "graded"}:
+                    continue
+
+                if daily is None:
+                    daily = DailyCheckIn(
+                        user_id=user.id,
+                        checkin_date=checkin_date,
+                        status="scheduled",
+                        question_text=DAILY_MESSAGE_TEXT,
+                    )
+                    session.add(daily)
+                    await session.commit()
+
+            # Отправляем вопрос пользователю. Если отправка успешна — отмечаем `sent`.
             try:
                 await bot.send_message(chat_id=user_id, text=DAILY_MESSAGE_TEXT)
             except Exception:
-                # Для простоты в первой версии не обрабатываем ошибки подробно.
-                # В будущем можно добавить логирование или удаление
-                # недоступных пользователей.
                 continue
+
+            async with session_scope() as session:
+                user = (
+                    await session.execute(
+                        select(User).where(User.telegram_user_id == user_id)
+                    )
+                ).scalar_one_or_none()
+                if user is None:
+                    continue
+
+                daily = (
+                    await session.execute(
+                        select(DailyCheckIn).where(
+                            DailyCheckIn.user_id == user.id,
+                            DailyCheckIn.checkin_date == checkin_date,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if daily is None:
+                    continue
+
+                daily.status = "sent"
+                daily.question_sent_at = datetime.now(timezone.utc)
+                await session.commit()
 
         # После рассылки не выходим из цикла, а снова считаем время
         # до следующего дня (следующих 21:00).

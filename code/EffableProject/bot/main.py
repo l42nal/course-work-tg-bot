@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 
 from .llm import get_response, init_llm
 from .scheduler import daily_question_scheduler
+from .db.session import init_engine, load_known_user_ids, ping_db, shutdown_engine, upsert_user
 
 load_dotenv()
 
@@ -34,6 +35,13 @@ async def handle_any_message(message: Message) -> None:
     в LLM, возвращая ответ «мягкого психолога».
     """
     user_id = message.from_user.id
+    await upsert_user(
+        telegram_user_id=user_id,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
+        username=message.from_user.username,
+        language_code=message.from_user.language_code,
+    )
     known_users.add(user_id)
 
     user_text = message.text or ""
@@ -45,17 +53,26 @@ async def handle_any_message(message: Message) -> None:
 
 
 async def main() -> None:
-    """Точка входа: инициализация бота, LLM-клиента и планировщика."""
+    """Точка входа: инициализация бота, LLM-клиента, БД и планировщика."""
     init_llm()
+    init_engine()
+
+    await ping_db()
+
+    # Загружаем ранее известных пользователей из БД, чтобы планировщик
+    # работал после перезапуска процесса.
+    known_users.update(await load_known_user_ids())
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
     dp.message.register(handle_any_message)
 
-    asyncio.create_task(daily_question_scheduler(bot, known_users))
-
-    await dp.start_polling(bot)
+    try:
+        asyncio.create_task(daily_question_scheduler(bot, known_users))
+        await dp.start_polling(bot)
+    finally:
+        await shutdown_engine()
 
 
 if __name__ == "__main__":
