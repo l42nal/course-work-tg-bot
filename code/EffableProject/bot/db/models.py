@@ -37,6 +37,11 @@ class User(Base):
     future_messages: Mapped[list["FutureMessage"]] = relationship(back_populates="user", lazy="selectin")
     daily_checkins: Mapped[list["DailyCheckIn"]] = relationship(back_populates="user", lazy="selectin")
     plans: Mapped[list["Plan"]] = relationship(back_populates="user", lazy="selectin")
+    plan_state: Mapped[Optional["UserPlanState"]] = relationship(
+        back_populates="user",
+        lazy="selectin",
+        uselist=False,
+    )
 
 
 class FutureMessage(Base):
@@ -50,6 +55,8 @@ class FutureMessage(Base):
 
     # scheduled | sent | cancelled
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="scheduled", index=True)
+    # generic | plans_followup_question
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="generic", index=True)
 
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
@@ -144,4 +151,33 @@ class PlanFollowUp(Base):
     )
 
     plan: Mapped["Plan"] = relationship(back_populates="followup")
+
+
+class UserPlanState(Base):
+    __tablename__ = "user_plan_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    # normal | awaiting_plan | awaiting_followup
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, default="normal", index=True)
+
+    # Храним только последний план пользователя.
+    last_plan_for_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    last_plan_raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_plan_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    user: Mapped["User"] = relationship(back_populates="plan_state")
 

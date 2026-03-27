@@ -4,7 +4,7 @@
 Задача:
 - раз в сутки (в 21:00 по локальному времени сервера)
   отправлять всем известным пользователям сообщение
-  "Привет! Как прошел твой день?"
+  "Какие у тебя планы на завтра?"
 """
 
 import asyncio
@@ -15,11 +15,12 @@ from aiogram import Bot
 
 from sqlalchemy import select
 
+from .db import crud
 from .db.models import DailyCheckIn, User
 from .db.session import session_scope
 
 
-DAILY_MESSAGE_TEXT = "Привет! Как прошел твой день?"
+DAILY_MESSAGE_TEXT = "Какие у тебя планы на завтра?"
 
 
 def _seconds_until_next_21() -> float:
@@ -107,6 +108,7 @@ async def daily_question_scheduler(bot: Bot, user_ids: Set[int]) -> None:
             # Отправляем вопрос пользователю. Если отправка успешна — отмечаем `sent`.
             try:
                 await bot.send_message(chat_id=user_id, text=DAILY_MESSAGE_TEXT)
+                await crud.set_plan_mode(user_id, "awaiting_plan")
             except Exception:
                 continue
 
