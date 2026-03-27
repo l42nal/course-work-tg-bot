@@ -7,6 +7,7 @@
 
 import os
 import logging
+import json
 from dataclasses import dataclass, field
 from typing import Dict, List
 import time
@@ -180,3 +181,95 @@ async def get_response(user_id: int, user_text: str) -> str:
             "Прости, произошла ошибка при обработке сообщения. "
             "Попробуй написать ещё раз чуть позже."
         )
+
+
+async def generate_plan_summary_and_followup(user_id: int, raw_plan_text: str) -> tuple[str, str]:
+    """
+    Один вызов LLM:
+    1) сжимает планы пользователя до 1-3 ключевых действий
+    2) формирует готовый follow-up вопрос на завтра.
+    """
+    fallback_summary = " ".join(raw_plan_text.split())[:140].strip() or "твой план"
+    fallback_followup = (
+        f"Вчера ты планировал: {fallback_summary}\n"
+        "Как у тебя получилось это реализовать сегодня?"
+    )
+
+    if _client is None:
+        return fallback_summary, fallback_followup
+
+    prompt = (
+        "Ниже сообщение пользователя с планами на завтра.\n"
+        "Сделай ДВА результата и верни строго JSON-объект.\n\n"
+        "Требования:\n"
+        "1) plan_summary: 1-3 ключевых действия, кратко, без воды.\n"
+        "2) followup_message: одно готовое сообщение, которое бот отправит завтра.\n"
+        "   Формат followup_message:\n"
+        "   - в начале фраза вида 'Вчера ты планировал: ...'\n"
+        "   - в конце вопрос о том, как прошла реализация планов.\n"
+        "   - дружелюбный тон, коротко.\n\n"
+        "Верни ТОЛЬКО JSON такого вида:\n"
+        '{"plan_summary":"...","followup_message":"..."}\n\n'
+        f"Текст пользователя:\n{raw_plan_text}"
+    )
+
+    try:
+        response = await _client.chat.completions.create(
+            model=_model,
+            messages=[
+                {"role": "system", "content": "Ты пишешь только валидный JSON без пояснений."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=250,
+        )
+        content = (response.choices[0].message.content or "").strip()
+        data = json.loads(content)
+        summary = str(data.get("plan_summary", "")).strip()
+        followup = str(data.get("followup_message", "")).strip()
+        if not summary or not followup:
+            return fallback_summary, fallback_followup
+        return summary[:240], followup[:700]
+    except Exception:
+        logger.exception("Ошибка генерации plan summary/followup для user_id=%s", user_id)
+        return fallback_summary, fallback_followup
+
+
+async def generate_followup_reaction(user_id: int, followup_answer_text: str) -> str:
+    """
+    Один вызов LLM:
+    - короткая реакция на то, как прошли планы (поддержка/похвала)
+    - в конце обязательно вопрос про планы на завтра.
+    """
+    fallback = (
+        "Спасибо, что поделился. Это полезно, чтобы видеть свой прогресс.\n\n"
+        "Кстати, какие планы на завтра?"
+    )
+    if _client is None:
+        return fallback
+
+    prompt = (
+        "Пользователь ответил, как прошла реализация планов.\n"
+        "Сформируй короткий человеческий ответ на русском (2-4 предложения):\n"
+        "- если получилось, похвали;\n"
+        "- если не получилось, поддержи без давления;\n"
+        "- в конце обязательно отдельной фразой спроси: 'Кстати, какие планы на завтра?'\n"
+        "- без морализаторства и без пунктов.\n\n"
+        f"Ответ пользователя:\n{followup_answer_text}"
+    )
+    try:
+        response = await _client.chat.completions.create(
+            model=_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.6,
+            max_tokens=180,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            return fallback
+        if "Кстати, какие планы на завтра?" not in text:
+            text = f"{text}\n\nКстати, какие планы на завтра?"
+        return text
+    except Exception:
+        logger.exception("Ошибка генерации followup reaction для user_id=%s", user_id)
+        return fallback
