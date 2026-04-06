@@ -34,6 +34,55 @@ class DailyCheckInData:
     mood_score: Optional[int]
 
 
+@dataclass(frozen=True)
+class MoodScoreRow:
+    day: date
+    score: int
+
+
+async def list_mood_scores(telegram_user_id: int) -> list[MoodScoreRow]:
+    """
+    Возвращает все реальные оценки настроения пользователя (mood_score IS NOT NULL),
+    отсортированные по дате (asc).
+    """
+    async with session_scope() as session:
+        user = (
+            await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
+        ).scalar_one_or_none()
+        if user is None:
+            raise ValueError(f"User not found: telegram_user_id={telegram_user_id}")
+
+        rows = (
+            await session.execute(
+                select(DailyCheckIn.checkin_date, DailyCheckIn.mood_score)
+                .where(
+                    DailyCheckIn.user_id == user.id,
+                    DailyCheckIn.mood_score.is_not(None),
+                )
+                .order_by(DailyCheckIn.checkin_date.asc())
+            )
+        ).all()
+
+    return [MoodScoreRow(day=r[0], score=int(r[1])) for r in rows]
+
+
+async def upsert_mood_score_for_date(
+    telegram_user_id: int,
+    checkin_date: date,
+    mood_score: int,
+) -> None:
+    """
+    Debug/helper: записывает/перезаписывает mood_score на конкретную дату.
+    Не трогает основную логику сценария, это служебный метод.
+    """
+    await save_daily_checkin_mood_score(
+        telegram_user_id=telegram_user_id,
+        checkin_date=checkin_date,
+        mood_score=mood_score,
+        response_text=None,
+    )
+
+
 async def create_future_message(
     telegram_user_id: int,
     message_text: str,

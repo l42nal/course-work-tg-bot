@@ -5,11 +5,14 @@
 import asyncio
 import logging
 import os
+import random
+import re
+import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Set
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import Message
+from aiogram.types import FSInputFile, Message
 from dotenv import load_dotenv
 
 from .db import crud
@@ -23,6 +26,8 @@ from .llm import (
 )
 from .scheduler import daily_question_scheduler
 from .services.scheduler_service import init_scheduler, schedule_message
+from .services.stats_service import format_mood_stats_text, get_user_mood_stats
+from .services.mood_plot import MonthMoodPoint, build_month_mood_plot_png
 from .db.session import init_engine, load_known_user_ids, ping_db, shutdown_engine, upsert_user
 
 load_dotenv()
@@ -74,6 +79,36 @@ async def handle_any_message(message: Message) -> None:
 
     today = datetime.now().date()
 
+    # /stat — статистика настроения + график текущего месяца
+    if user_text.strip() == "/stat":
+        stats = await get_user_mood_stats(user_id, today=today)
+        await message.answer(format_mood_stats_text(stats))
+
+        if stats.total_days == 0:
+            return
+
+        # График текущего месяца по реальным записям (пропуски не показываем).
+        entries = await crud.list_mood_scores(user_id)
+        month_points = [
+            MonthMoodPoint(day=e.day, score=e.score)
+            for e in entries
+            if e.day.year == today.year and e.day.month == today.month
+        ]
+
+        png_path = build_month_mood_plot_png(month_points, year=today.year, month=today.month)
+        if png_path is None:
+            await message.answer("За текущий месяц пока нет оценок — график построить не из чего.")
+            return
+
+        try:
+            await message.answer_photo(FSInputFile(png_path))
+        finally:
+            try:
+                os.remove(png_path)
+            except Exception:
+                logging.getLogger(__name__).exception("Failed to remove temp plot file: %s", png_path)
+        return
+
     # Минимальный ручной тест планировщика (не UX фича).
     # Напиши боту: /test_schedule_1m
     if user_text.strip() == "/test_schedule_1m":
@@ -84,6 +119,55 @@ async def handle_any_message(message: Message) -> None:
             send_at=send_at,
         )
         await message.answer("Ок, запланировал сообщение на +1 минуту.")
+        return
+
+    # Debug: добавить/перезаписать оценку за конкретный день.
+    # Пример: /debug_add_mood 2026-03-01 8
+    if user_text.strip().startswith("/debug_add_mood"):
+        m = re.match(r"^/debug_add_mood\s+(\d{4}-\d{2}-\d{2})\s+(\d{1,2})\s*$", user_text.strip())
+        if not m:
+            await message.answer("Формат: /debug_add_mood YYYY-MM-DD SCORE (0..10)")
+            return
+        day_s, score_s = m.group(1), m.group(2)
+        try:
+            day = datetime.strptime(day_s, "%Y-%m-%d").date()
+            score = int(score_s)
+            if score < 0 or score > 10:
+                raise ValueError("score out of range")
+        except Exception:
+            await message.answer("Не смог разобрать дату/оценку. Пример: /debug_add_mood 2026-03-01 8")
+            return
+
+        await crud.upsert_mood_score_for_date(user_id, day, score)
+        await message.answer(f"Ок. Записал {score} на {day.isoformat()}.")
+        return
+
+    # Debug: быстро заполнить тестовые данные за последние N дней (по умолчанию 21).
+    # Пример: /debug_seed_moods 30
+    if user_text.strip().startswith("/debug_seed_moods"):
+        m = re.match(r"^/debug_seed_moods(?:\s+(\d{1,3}))?\s*$", user_text.strip())
+        if not m:
+            await message.answer("Формат: /debug_seed_moods [N] (например: /debug_seed_moods 30)")
+            return
+        n_s = m.group(1)
+        n = int(n_s) if n_s else 21
+        n = max(1, min(n, 120))
+
+        # Сгенерируем «похожую на жизнь» серию: плавный тренд + шум, с пропусками.
+        base = random.randint(4, 7)
+        wrote = 0
+        for i in range(n - 1, -1, -1):
+            day = today - timedelta(days=i)
+            # 20% пропусков
+            if random.random() < 0.2:
+                continue
+            drift = int(round((n - 1 - i) / max(1, n / 6)))  # лёгкий тренд
+            score = base + (drift % 3) - 1 + random.randint(-1, 1)
+            score = max(0, min(10, score))
+            await crud.upsert_mood_score_for_date(user_id, day, score)
+            wrote += 1
+
+        await message.answer(f"Ок. Добавил тестовые оценки: {wrote} записей за последние {n} дней.")
         return
 
     # --- Daily check-in сценарий (оценка дня -> планы на сегодня -> планы на завтра) ---
