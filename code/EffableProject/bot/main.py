@@ -28,6 +28,7 @@ from .scheduler import daily_question_scheduler
 from .services.scheduler_service import init_scheduler, schedule_message
 from .services.stats_service import format_mood_stats_text, get_user_mood_stats
 from .services.mood_plot import MonthMoodPoint, build_month_mood_plot_png
+from .services.export_service import build_user_export_payload, dumps_user_export
 from .db.session import init_engine, load_known_user_ids, ping_db, shutdown_engine, upsert_user
 
 load_dotenv()
@@ -78,6 +79,27 @@ async def handle_any_message(message: Message) -> None:
         return
 
     today = datetime.now().date()
+
+    # /export — выгрузить все данные пользователя из БД в JSON
+    if user_text.strip() == "/export":
+        payload = await build_user_export_payload(user_id)
+        json_text = dumps_user_export(payload)
+
+        fd, path = tempfile.mkstemp(prefix=f"export_{user_id}_", suffix=".json")
+        os.close(fd)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(json_text)
+            await message.answer_document(
+                FSInputFile(path),
+                caption="Твой экспорт данных (JSON).",
+            )
+        finally:
+            try:
+                os.remove(path)
+            except Exception:
+                logging.getLogger(__name__).exception("Failed to remove temp export file: %s", path)
+        return
 
     # /stat — статистика настроения + график текущего месяца
     if user_text.strip() == "/stat":
