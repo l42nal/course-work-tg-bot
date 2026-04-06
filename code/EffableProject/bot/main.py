@@ -14,8 +14,10 @@ from dotenv import load_dotenv
 
 from .db import crud
 from .llm import (
+    convert_mood_text_to_score,
     generate_followup_reaction,
     generate_plan_summary_and_followup,
+    generate_plans_today_reaction_and_ask_tomorrow,
     get_response,
     init_llm,
 )
@@ -70,6 +72,8 @@ async def handle_any_message(message: Message) -> None:
     if not user_text.strip():
         return
 
+    today = datetime.now().date()
+
     # Минимальный ручной тест планировщика (не UX фича).
     # Напиши боту: /test_schedule_1m
     if user_text.strip() == "/test_schedule_1m":
@@ -82,10 +86,73 @@ async def handle_any_message(message: Message) -> None:
         await message.answer("Ок, запланировал сообщение на +1 минуту.")
         return
 
+    # --- Daily check-in сценарий (оценка дня -> планы на сегодня -> планы на завтра) ---
+    daily = await crud.get_daily_checkin(user_id, today)
+    if daily is not None and daily.status == "sent" and daily.mood_score is None:
+        text = user_text.strip()
+        score: int | None = None
+        if text.isdigit():
+            n = int(text)
+            if 1 <= n <= 10:
+                score = n
+        if score is None:
+            score = await convert_mood_text_to_score(user_id, text)
+        if score is None:
+            await message.answer("Не совсем понял оценку. Напиши число от 1 до 10.")
+            return
+
+        await crud.save_daily_checkin_mood_score(user_id, today, score, response_text=None)
+        await crud.set_daily_checkin_status(user_id, today, "plans_today")
+
+        if score <= 4:
+            mood_reply = "Похоже, день был непростой. Ничего страшного, такие дни бывают."
+        elif score <= 7:
+            mood_reply = "Неплохой день 🙂"
+        else:
+            mood_reply = "Отлично! Рад, что день прошёл хорошо."
+
+        plan_state = await crud.get_plan_state(user_id)
+        plans_today_line = ""
+        if plan_state.last_plan_for_date == today and plan_state.last_plan_summary:
+            plans_today_line = f"\n\nТвои планы на сегодня были: {plan_state.last_plan_summary}"
+
+        await message.answer(
+            f"{mood_reply}\n\nКак прошли твои планы на сегодня?{plans_today_line}"
+        )
+        return
+
+    if daily is not None and daily.status == "plans_today":
+        plan_state = await crud.get_plan_state(user_id)
+        today_plan_summary = (
+            plan_state.last_plan_summary
+            if plan_state.last_plan_for_date == today
+            else None
+        )
+        reply = await generate_plans_today_reaction_and_ask_tomorrow(
+            user_id=user_id,
+            plans_today_text=user_text,
+            today_plan_summary=today_plan_summary,
+        )
+        await crud.save_daily_checkin_answer(user_id, today, response_text=user_text)
+        await crud.set_daily_checkin_status(user_id, today, "answered")
+        await crud.set_plan_mode(user_id, "awaiting_plan")
+        await message.answer(reply)
+        return
+
     # Debug: принудительно запускает "вечерний" вопрос про планы.
     if user_text.strip() == "/debug_evening_now":
         await crud.set_plan_mode(user_id, "awaiting_plan")
         await message.answer("Какие у тебя планы на завтра?")
+        return
+
+    # Debug: принудительно запускает "вечерний" daily check-in (оценка дня).
+    if user_text.strip() == "/debug_checkin_now":
+        await crud.reset_daily_checkin_for_date(
+            user_id,
+            today,
+            question_text="Как прошёл твой день? Оцени его от 1 до 10.",
+        )
+        await message.answer("Как прошёл твой день? Оцени его от 1 до 10.")
         return
 
     # Debug: принудительно запускает follow-up вопрос по последнему плану.
@@ -124,7 +191,10 @@ async def handle_any_message(message: Message) -> None:
             message_kind="plans_followup_question",
         )
 
-        await message.answer("Запомнил. Завтра в это же время спрошу, как это получилось.")
+        await message.answer(
+            "Запомнил. Завтра в это же время спрошу, как это получилось.\n"
+            "А пока можем просто поговорить, если хочешь)"
+        )
         return
 
     if state.mode == "awaiting_followup":

@@ -28,6 +28,12 @@ class PlanStateData:
     last_plan_summary: Optional[str]
 
 
+@dataclass(frozen=True)
+class DailyCheckInData:
+    status: str
+    mood_score: Optional[int]
+
+
 async def create_future_message(
     telegram_user_id: int,
     message_text: str,
@@ -292,6 +298,101 @@ async def save_daily_checkin_answer(
         else:
             daily.status = "answered"
             daily.response_text = response_text
+
+        await session.commit()
+
+
+async def get_daily_checkin(telegram_user_id: int, checkin_date: date) -> DailyCheckInData | None:
+    async with session_scope() as session:
+        user = (
+            await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
+        ).scalar_one_or_none()
+        if user is None:
+            raise ValueError(f"User not found: telegram_user_id={telegram_user_id}")
+
+        daily = (
+            await session.execute(
+                select(DailyCheckIn).where(
+                    DailyCheckIn.user_id == user.id,
+                    DailyCheckIn.checkin_date == checkin_date,
+                )
+            )
+        ).scalar_one_or_none()
+        if daily is None:
+            return None
+
+        return DailyCheckInData(status=daily.status, mood_score=daily.mood_score)
+
+
+async def set_daily_checkin_status(telegram_user_id: int, checkin_date: date, status: str) -> None:
+    async with session_scope() as session:
+        user = (
+            await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
+        ).scalar_one_or_none()
+        if user is None:
+            raise ValueError(f"User not found: telegram_user_id={telegram_user_id}")
+
+        daily = (
+            await session.execute(
+                select(DailyCheckIn).where(
+                    DailyCheckIn.user_id == user.id,
+                    DailyCheckIn.checkin_date == checkin_date,
+                )
+            )
+        ).scalar_one_or_none()
+        if daily is None:
+            daily = DailyCheckIn(
+                user_id=user.id,
+                checkin_date=checkin_date,
+                status=status,
+            )
+            session.add(daily)
+        else:
+            daily.status = status
+
+        await session.commit()
+
+
+async def reset_daily_checkin_for_date(
+    telegram_user_id: int,
+    checkin_date: date,
+    question_text: Optional[str] = None,
+) -> None:
+    """
+    Debug/helper: сбрасывает чек-ин на дату в состояние "sent" и очищает ответы/оценку.
+    Нужен для повторяемого ручного тестирования сценария.
+    """
+    async with session_scope() as session:
+        user = (
+            await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
+        ).scalar_one_or_none()
+        if user is None:
+            raise ValueError(f"User not found: telegram_user_id={telegram_user_id}")
+
+        daily = (
+            await session.execute(
+                select(DailyCheckIn).where(
+                    DailyCheckIn.user_id == user.id,
+                    DailyCheckIn.checkin_date == checkin_date,
+                )
+            )
+        ).scalar_one_or_none()
+
+        if daily is None:
+            daily = DailyCheckIn(
+                user_id=user.id,
+                checkin_date=checkin_date,
+                status="sent",
+                question_text=question_text,
+                question_sent_at=datetime.now(timezone.utc),
+            )
+            session.add(daily)
+        else:
+            daily.status = "sent"
+            daily.question_text = question_text or daily.question_text
+            daily.question_sent_at = datetime.now(timezone.utc)
+            daily.response_text = None
+            daily.mood_score = None
 
         await session.commit()
 

@@ -273,3 +273,76 @@ async def generate_followup_reaction(user_id: int, followup_answer_text: str) ->
     except Exception:
         logger.exception("Ошибка генерации followup reaction для user_id=%s", user_id)
         return fallback
+
+
+async def convert_mood_text_to_score(user_id: int, mood_text: str) -> int | None:
+    """
+    Используется только если пользователь не прислал число 1..10.
+    Модель должна вернуть ТОЛЬКО число от 1 до 10.
+    """
+    if _client is None:
+        return None
+
+    prompt = (
+        "Преобразуй текстовую оценку дня в число от 1 до 10.\n"
+        "Верни строго ОДНО число (1..10) без слов и знаков.\n\n"
+        f"Текст пользователя: {mood_text}"
+    )
+    try:
+        response = await _client.chat.completions.create(
+            model=_model,
+            messages=[
+                {"role": "system", "content": "Ответ: только число 1..10."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+            max_tokens=5,
+        )
+        content = (response.choices[0].message.content or "").strip()
+        score = int("".join(ch for ch in content if ch.isdigit()) or "0")
+        if 1 <= score <= 10:
+            return score
+        return None
+    except Exception:
+        logger.exception("Ошибка convert_mood_text_to_score для user_id=%s", user_id)
+        return None
+
+
+async def generate_plans_today_reaction_and_ask_tomorrow(
+    user_id: int,
+    plans_today_text: str,
+    today_plan_summary: str | None,
+) -> str:
+    """
+    Реакция на "как прошли планы" + в конце спросить планы на завтра.
+    """
+    fallback = "Спасибо, что поделился.\n\nКакие планы на завтра?"
+    if _client is None:
+        return fallback
+
+    plan_part = f"Планы на сегодня: {today_plan_summary}\n" if today_plan_summary else ""
+    prompt = (
+        "Пользователь рассказал, как прошли его планы на сегодня.\n"
+        "Сформируй короткий человеческий ответ на русском (2-4 предложения):\n"
+        "- если получилось, похвали;\n"
+        "- если не получилось, поддержи;\n"
+        "- в конце ОБЯЗАТЕЛЬНО отдельной строкой спроси: 'Какие планы на завтра?'\n\n"
+        f"{plan_part}"
+        f"Ответ пользователя:\n{plans_today_text}"
+    )
+    try:
+        response = await _client.chat.completions.create(
+            model=_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.6,
+            max_tokens=200,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            return fallback
+        if "Какие планы на завтра?" not in text:
+            text = f"{text}\n\nКакие планы на завтра?"
+        return text
+    except Exception:
+        logger.exception("Ошибка generate_plans_today_reaction для user_id=%s", user_id)
+        return fallback
