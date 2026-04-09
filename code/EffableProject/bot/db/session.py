@@ -73,6 +73,35 @@ async def ping_db() -> None:
         await session.execute(text("SELECT 1"))
 
 
+async def ensure_users_telegram_id_bigint() -> None:
+    """
+    Делает схему совместимой с текущими Telegram user_id (которые могут превышать int32).
+    Выполняет ALTER только если текущий тип колонки `users.telegram_user_id` == INTEGER.
+    """
+    async with session_scope() as session:
+        async with session.begin():
+            row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT data_type
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'users'
+                          AND column_name = 'telegram_user_id'
+                        """
+                    )
+                )
+            ).one_or_none()
+
+            data_type = str(row[0]) if row is not None and row[0] is not None else None
+
+            if data_type == "integer":
+                await session.execute(
+                    text("ALTER TABLE public.users ALTER COLUMN telegram_user_id TYPE BIGINT")
+                )
+
+
 async def upsert_user(
     telegram_user_id: int,
     first_name: Optional[str],

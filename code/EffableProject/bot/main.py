@@ -29,7 +29,15 @@ from .services.scheduler_service import init_scheduler, schedule_message
 from .services.stats_service import format_mood_stats_text, get_user_mood_stats
 from .services.mood_plot import MonthMoodPoint, build_month_mood_plot_png
 from .services.export_service import build_user_export_payload, dumps_user_export
-from .db.session import init_engine, load_known_user_ids, ping_db, shutdown_engine, upsert_user
+from .services.user_data_service import reset_user_data
+from .db.session import (
+    ensure_users_telegram_id_bigint,
+    init_engine,
+    load_known_user_ids,
+    ping_db,
+    shutdown_engine,
+    upsert_user,
+)
 
 load_dotenv()
 
@@ -65,6 +73,7 @@ async def handle_any_message(message: Message) -> None:
     в LLM, возвращая ответ «мягкого психолога».
     """
     user_id = message.from_user.id
+
     await upsert_user(
         telegram_user_id=user_id,
         first_name=message.from_user.first_name,
@@ -79,6 +88,16 @@ async def handle_any_message(message: Message) -> None:
         return
 
     today = datetime.now().date()
+
+    # /reset — полностью удалить данные пользователя из БД
+    if user_text.strip() == "/reset":
+        existed = await reset_user_data(user_id)
+        known_users.discard(user_id)
+        if existed:
+            await message.answer("Все твои данные удалены. Можем начать заново 🙂")
+        else:
+            await message.answer("Похоже, у тебя ещё нет данных в базе. Можем начать заново 🙂")
+        return
 
     # /export — выгрузить все данные пользователя из БД в JSON
     if user_text.strip() == "/export":
@@ -319,6 +338,7 @@ async def main() -> None:
     init_engine()
 
     await ping_db()
+    await ensure_users_telegram_id_bigint()
 
     # Загружаем ранее известных пользователей из БД, чтобы планировщик
     # работал после перезапуска процесса.
