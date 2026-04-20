@@ -25,10 +25,9 @@ pip install -r requirements.txt
 
 1. Создай Telegram-бота через `@BotFather` и получи **BOT_TOKEN**.
 
-### 2. OpenRouter (бесплатная LLM)
+### 2. OpenRouter (LLM)
 
-Бот использует [OpenRouter](https://openrouter.ai/) для доступа к LLM-моделям.  
-OpenRouter предоставляет бесплатный доступ к нескольким моделям.
+Бот использует [OpenRouter](https://openrouter.ai/) для доступа к LLM-моделям.
 
 1. Зарегистрируйся на [openrouter.ai](https://openrouter.ai/).
 2. Перейди в раздел **Keys** → создай новый API-ключ.
@@ -54,15 +53,73 @@ OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct:free
 
 > **Важно:** файл `.env` добавлен в `.gitignore` и не попадёт в репозиторий.
 
-## Как запустить бота
+### 4. Подключение к PostgreSQL (`DATABASE_URL`)
 
-Из корневой папки проекта (где лежит `requirements.txt`) выполни:
+Проект поддерживает:
+
+- `DATABASE_URL` (предпочтительно)
+- или раздельные `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+
+Пример для локального запуска:
+
+```env
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/effable_bot
+```
+
+В Docker Compose **`localhost` внутри контейнера не указывает на PostgreSQL контейнер**. Поэтому в `docker-compose.yml` для сервиса `bot` `DATABASE_URL` переопределяется на хост `postgres` (имя сервиса в сети compose).
+
+## Запуск
+
+### Локально (без Docker)
+
+Из папки проекта (где лежит `requirements.txt`) выполни:
 
 ```bash
 python -m bot.main
 ```
 
-После запуска:
+### Через Docker Compose (PostgreSQL + бот)
+
+Из папки проекта (где лежат `docker-compose.yml` и `Dockerfile`):
+
+1. Создай `.env` по образцу `.env.example`.
+2. Запуск:
+
+```bash
+docker compose up --build
+```
+
+Остановка:
+
+```bash
+docker compose down
+```
+
+Логи:
+
+```bash
+docker compose logs -f
+```
+
+Перед стартом бота контейнер выполняет `alembic upgrade head`. PostgreSQL ждётся по `healthcheck` (`pg_isready`), затем стартует бот.
+
+### Проверка, что Docker-версия реально работает
+
+1. Посмотреть статусы:
+
+```bash
+docker compose ps
+```
+
+2. Посмотреть логи бота:
+
+```bash
+docker compose logs -f bot
+```
+
+3. Убедиться, что бот отвечает в Telegram: напиши ему любое сообщение.
+
+После успешного запуска (локально или в Docker):
 - бот начнет принимать сообщения и **отвечать через AI-ассистента**
 - все пользователи, которые написали боту хотя бы раз, будут считаться «подписчиками»
 - каждый день в **21:00** по локальному времени сервера бот отправит всем подписчикам вопрос:
@@ -82,5 +139,7 @@ python -m bot.main
                                               └─ OpenRouter API → ответ LLM → пользователю
 ```
 
-## Ограничения- История диалогов и список пользователей хранятся **в памяти** — при перезапуске бота они сбрасываются.
+## Ограничения
+
+- История диалогов и список пользователей хранятся **в памяти** — при перезапуске бота они сбрасываются.
 - Бесплатные модели OpenRouter могут иметь ограничения по скорости и доступности.

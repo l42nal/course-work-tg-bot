@@ -64,7 +64,7 @@ class FutureMessage(Base):
     scheduled_for: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
     # scheduled | sent | cancelled
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="scheduled", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="scheduled", index=True)
     # generic | plans_followup_question
     kind: Mapped[str] = mapped_column(String(32), nullable=False, default="generic", index=True)
 
@@ -91,7 +91,7 @@ class DailyCheckIn(Base):
     checkin_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
     # Статусы: scheduled | sent | answered | graded
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="scheduled", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="scheduled", index=True)
 
     question_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     question_sent_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -126,7 +126,7 @@ class Plan(Base):
     summary_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # planned | cancelled | completed (опционально)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="planned", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned", index=True)
 
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
@@ -154,7 +154,7 @@ class PlanFollowUp(Base):
     response_text: Mapped[str] = mapped_column(Text, nullable=False)
     summary_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="submitted", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="submitted", index=True)
 
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

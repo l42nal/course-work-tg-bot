@@ -1,0 +1,40 @@
+# Git / VCS
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor
+.idea/
+.vscode/
+*.iml
+
+# Секреты (в образ не копируем; переменные передаёт compose через env_file)
+.env
+
+# Тесты (в контейнере не используются)
+tests/
+pytest.ini
+
+# Документация (боту не нужна)
+docs/
+
+# Прочее
+*.log
+.cursor/
+.DS_Store

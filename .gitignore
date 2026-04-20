@@ -1,6 +1,3 @@
-.env
-.DS_Store
-
 # Python
 __pycache__/
 *.py[cod]
@@ -18,10 +15,20 @@ build/
 venv/
 env/
 
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
 # IDE
 .idea/
 *.iml
 .vscode/
 
-# Logs
+# OS
+.DS_Store
+Thumbs.db
+
+# Cursor / local tooling
+.cursor/
 *.log

@@ -1,4 +1,4 @@
-from bot.main import _build_followup_question, _summarize_plan_text
+from bot.services.checkin_service import _build_followup_question, _summarize_plan_text
 
 
 def test_summarize_plan_text_normalizes_spaces() -> None:

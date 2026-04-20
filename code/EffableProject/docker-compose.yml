@@ -10,7 +10,28 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d effable_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: effable_bot_app
+    env_file:
+      - .env
+    environment:
+      # Важно: внутри сети compose хост БД — имя сервиса `postgres`, не localhost.
+      # Переопределяет DATABASE_URL из .env (там часто localhost для локального запуска).
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/effable_bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:
-
