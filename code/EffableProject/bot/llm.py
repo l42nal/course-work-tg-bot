@@ -8,19 +8,21 @@
 import os
 import logging
 import json
+#импорты dataclasses, field - для хранения истории диалогов
 from dataclasses import dataclass, field
+#подсказка типов
 from typing import Dict, List
 import time
 
 _last_request_time: Dict[int, float] = {}
-MIN_REQUEST_INTERVAL = 3
+MIN_REQUEST_INTERVAL = 3 #минимальный интервал между запросами к LLM (3 секунды)
 
 from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
-RECENT_MESSAGES = 18
-SUMMARY_MAX_CHARS = 1200
+RECENT_MESSAGES = 18 #максимальное количество сообщений в истории диалогов
+SUMMARY_MAX_CHARS = 1200 #максимальное количество символов в сжатом резюме
 
 SUMMARY_PROMPT = (
     "Сожми следующий фрагмент диалога в краткое резюме.\n"
@@ -64,7 +66,7 @@ class Memory:
     recent: List[dict] = field(default_factory=list)
 
 
-_memories: Dict[int, Memory] = {}
+_memories: Dict[int, Memory] = {} #словарь для хранения истории диалогов для каждого пользователя
 
 
 def _get_memory(user_id: int) -> Memory:
@@ -101,7 +103,7 @@ async def _summarize(
             model=_model,
             messages=[{"role": "user", "content": full_prompt}],
         )
-        summary = (response.choices[0].message.content or "").strip()
+        summary = (response.choices[0].message.content or "").strip() #получаем сжатое резюме от LLM
         return summary[:SUMMARY_MAX_CHARS]
     except Exception:
         logger.exception("Ошибка при суммаризации для user_id=%s", user_id)
@@ -120,16 +122,16 @@ def init_llm() -> None:
         _client = None
         return
 
-    _model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat")
+    _model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat") #модель LLM, по умолчанию deepseek/deepseek-chat
 
-    _client = AsyncOpenAI(
+    _client = AsyncOpenAI( #инициализируем клиент OpenRouter
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
     )
     logger.info("LLM-клиент инициализирован (модель: %s)", _model)
 
 
-async def get_response(user_id: int, user_text: str) -> str:
+async def get_response(user_id: int, user_text: str) -> str: #отправляет сообщение пользователя в LLM и возвращает ответ
     """
     Отправляет сообщение пользователя в LLM и возвращает ответ.
     Использует summary + recent для управления контекстом.
@@ -138,10 +140,10 @@ async def get_response(user_id: int, user_text: str) -> str:
     last = _last_request_time.get(user_id, 0)
 
     if now - last < MIN_REQUEST_INTERVAL:
-        return "Подожди пару секунд перед следующим сообщением 🙂"
+        return "Подожди пару секунд перед следующим сообщением 🙂" #если прошло меньше 3 секунд, возвращаем сообщение о том, что нужно подождать
 
     _last_request_time[user_id] = now
-    if _client is None:
+    if _client is None: #если клиент не инициализирован, возвращаем сообщение о том, что AI-ассистент недоступен
         return (
             "Спасибо за сообщение! К сожалению, AI-ассистент сейчас недоступен. "
             "Я буду спрашивать тебя каждый день в 21:00, как прошел твой день."
@@ -150,10 +152,10 @@ async def get_response(user_id: int, user_text: str) -> str:
     mem = _get_memory(user_id)
     mem.recent.append({"role": "user", "content": user_text})
 
-    if len(mem.recent) > RECENT_MESSAGES:
+    if len(mem.recent) > RECENT_MESSAGES: #если количество сообщений в истории диалогов больше максимального, сжимаем историю
         to_summarize = mem.recent[: len(mem.recent) - RECENT_MESSAGES]
         mem.recent = mem.recent[-RECENT_MESSAGES:]
-        mem.summary = await _summarize(to_summarize, mem.summary, user_id)
+        mem.summary = await _summarize(to_summarize, mem.summary, user_id) #сжимаем историю через LLM
         mem.summary = mem.summary[:SUMMARY_MAX_CHARS]
 
     system_content = SYSTEM_PROMPT
@@ -163,13 +165,13 @@ async def get_response(user_id: int, user_text: str) -> str:
     messages = [{"role": "system", "content": system_content}] + mem.recent
 
     try:
-        response = await _client.chat.completions.create(
+        response = await _client.chat.completions.create( #отправляем сообщение пользователя в LLM и получаем ответ
             model=_model,
             messages=messages,
-            temperature=0.7,
+            temperature=0.7, #температура для генерации текста, влияет на креативность и точность ответов
             max_tokens=200,
         )
-        assistant_text = response.choices[0].message.content or ""
+        assistant_text = response.choices[0].message.content or "" #получаем ответ от LLM
         mem.recent.append({"role": "assistant", "content": assistant_text})
         return assistant_text
 
@@ -183,13 +185,13 @@ async def get_response(user_id: int, user_text: str) -> str:
         )
 
 
-async def generate_plan_summary_and_followup(user_id: int, raw_plan_text: str) -> tuple[str, str]:
+async def generate_plan_summary_and_followup(user_id: int, raw_plan_text: str) -> tuple[str, str]: #генерирует краткое резюме планов и follow-up вопрос на завтра
     """
     Один вызов LLM:
     1) сжимает планы пользователя до 1-3 ключевых действий
     2) формирует готовый follow-up вопрос на завтра.
     """
-    fallback_summary = " ".join(raw_plan_text.split())[:140].strip() or "твой план"
+    fallback_summary = " ".join(raw_plan_text.split())[:140].strip() or "твой план" #получаем краткое резюме планов
     fallback_followup = (
         f"Вчера ты планировал: {fallback_summary}\n"
         "Как у тебя получилось это реализовать сегодня?"
@@ -220,7 +222,7 @@ async def generate_plan_summary_and_followup(user_id: int, raw_plan_text: str) -
                 {"role": "system", "content": "Ты пишешь только валидный JSON без пояснений."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.3,
+            temperature=0.3, #здесь 0.3 потому что мы хотим более точные ответы от LLM
             max_tokens=250,
         )
         content = (response.choices[0].message.content or "").strip()
@@ -305,7 +307,7 @@ async def convert_mood_text_to_score(user_id: int, mood_text: str) -> int | None
                 {"role": "system", "content": "Ответ: только число 1..10."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.0,
+            temperature=0.0, #здесь 0.0 потому что мы хотим максимально точные ответы от LLM. строго одно число от 1 до 10
             max_tokens=5,
         )
         content = (response.choices[0].message.content or "").strip()
@@ -318,7 +320,7 @@ async def convert_mood_text_to_score(user_id: int, mood_text: str) -> int | None
         return None
 
 
-async def generate_plans_today_reaction_and_ask_tomorrow(
+async def generate_plans_today_reaction_and_ask_tomorrow( #генерирует реакцию на "как прошли планы" и спросить планы на завтра
     user_id: int,
     plans_today_text: str,
     today_plan_summary: str | None,

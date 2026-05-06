@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from aiogram import Bot
@@ -17,7 +17,7 @@ from .checkin_service import DAILY_MESSAGE_TEXT, list_target_user_ids_for_daily_
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True) #класс для хранения информации о запланированном сообщении
 class ScheduledMessage:
     id: uuid.UUID
     telegram_user_id: int
@@ -35,48 +35,52 @@ class SchedulerService:
     APScheduler используется только как in-process исполнитель.
     """
 
-    def __init__(self, bot: Bot) -> None:
+    def __init__(self, bot: Bot) -> None: #инициализирует сервис планирования
         self._bot = bot
-        self._scheduler = AsyncIOScheduler(timezone=timezone.utc)
+        # Важно: timezone планировщика должен совпадать с timezone у CronTrigger.
+        # Иначе `datetime.now(scheduler.timezone)` в APScheduler и «локальные» 21:00
+        # расходятся, из-за чего джоба может не попасть в окно срабатывания / misfire.
+        self._wall_clock_tz = datetime.now().astimezone().tzinfo
+        self._scheduler = AsyncIOScheduler(timezone=self._wall_clock_tz)
 
-    async def start(self) -> None:
+    async def start(self) -> None: #запускает планировщик
         self._scheduler.start()
 
-    def register_daily_checkin_job(self) -> None:
+    def register_daily_checkin_job(self) -> None: #регистрирует ежедневный check-in
         """
-        Ежедневный check-in в 21:00 по локальному времени сервера.
+        Ежедневный check-in в 18:00 по локальному времени сервера.
 
-        Это целенаправленно заменяет отдельный бесконечный цикл в `bot/scheduler.py`,
+        Это целенаправленно заменяет отдельный legacy-планировщик с бесконечным циклом,
         чтобы в проекте остался один механизм планирования (APScheduler).
         """
-        local_tz = datetime.now().astimezone().tzinfo
-        self._scheduler.add_job(
+        job = self._scheduler.add_job(
             func=self._run_daily_checkin_broadcast,
-            trigger=CronTrigger(hour=21, minute=0, timezone=local_tz),
+            trigger=CronTrigger(hour=18, minute=00, timezone=self._wall_clock_tz),
             id="daily_checkin_21_local",
             replace_existing=True,
-            misfire_grace_time=60 * 30,
+            misfire_grace_time=86400,
         )
+        logger.info("Daily check-in job registered; next_run_time=%s", job.next_run_time)
 
-    async def shutdown(self) -> None:
+    async def shutdown(self) -> None: #останавливает планировщик
         # APScheduler async shutdown is sync method in most versions.
         try:
             self._scheduler.shutdown(wait=False)
         except Exception:
             logger.exception("Failed to shutdown scheduler")
 
-    async def restore_pending_messages(self) -> int:
+    async def restore_pending_messages(self) -> int: #восстанавливает запланированные сообщения
         """
         Загружает из БД все сообщения со статусом `scheduled`
         и регистрирует их в APScheduler заново.
         """
         pending = await crud.list_pending_future_messages()
-        for msg in pending:
+        for msg in pending: #регистрирует каждое запланированное сообщение в планировщик
             self._register_message_job(msg.id, msg.send_at)
         logger.info("Restored %s scheduled messages", len(pending))
         return len(pending)
 
-    async def schedule_message(
+    async def schedule_message( #планирует отправку сообщения
         self,
         telegram_user_id: int,
         text: str,
@@ -94,9 +98,16 @@ class SchedulerService:
             message_kind=message_kind,
         )
         self._register_message_job(msg_id, send_at_utc)
+        logger.info(
+            "Scheduled message created id=%s telegram_user_id=%s kind=%s send_at_utc=%s",
+            msg_id,
+            telegram_user_id,
+            message_kind,
+            send_at_utc.isoformat(),
+        )
         return msg_id
 
-    def _register_message_job(self, message_id: uuid.UUID, send_at: datetime) -> None:
+    def _register_message_job(self, message_id: uuid.UUID, send_at: datetime) -> None: 
         send_at_utc = _ensure_aware_utc(send_at)
         job_id = str(message_id)
 
@@ -110,6 +121,7 @@ class SchedulerService:
             replace_existing=True,
             misfire_grace_time=60 * 60,  # 1 час: если бот был выключен, отправим при старте
         )
+        logger.info("Scheduler job registered id=%s run_date_utc=%s", job_id, send_at_utc.isoformat())
 
     async def _execute_scheduled_message(self, message_id: uuid.UUID) -> None:
         """
@@ -132,6 +144,7 @@ class SchedulerService:
             await crud.set_plan_mode(msg.telegram_user_id, "awaiting_followup")
 
         await crud.mark_future_message_sent(message_id)
+        logger.info("Scheduled message sent id=%s telegram_user_id=%s", message_id, msg.telegram_user_id)
 
     async def _run_daily_checkin_broadcast(self) -> None:
         """
@@ -140,8 +153,13 @@ class SchedulerService:
         Идемпотентность обеспечивается записями `daily_checkins`:
         если статус уже sent/answered/graded — повторно не отправляем.
         """
-        checkin_date = date.today()
+        checkin_date = datetime.now(self._wall_clock_tz).date()
         user_ids = await list_target_user_ids_for_daily_checkin()
+        logger.info(
+            "Daily check-in broadcast starting for %s (%s users)",
+            checkin_date,
+            len(user_ids),
+        )
 
         for telegram_user_id in user_ids:
             daily = await crud.get_daily_checkin(telegram_user_id, checkin_date)
@@ -157,6 +175,10 @@ class SchedulerService:
             try:
                 await self._bot.send_message(chat_id=telegram_user_id, text=DAILY_MESSAGE_TEXT)
             except Exception:
+                logger.exception(
+                    "Failed to send daily check-in to telegram_user_id=%s",
+                    telegram_user_id,
+                )
                 continue
 
             await crud.set_daily_checkin_status(telegram_user_id, checkin_date, "sent")

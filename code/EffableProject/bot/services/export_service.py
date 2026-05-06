@@ -12,33 +12,33 @@ from ..db.models import DailyCheckIn, FutureMessage, Plan, User, UserPlanState
 from ..db.session import session_scope
 
 
-def _to_jsonable(value: Any) -> Any:
-    if value is None:
+def _to_jsonable(value: Any) -> Any: #преобразует значение в JSON-совместимый формат
+    if value is None: 
         return None
-    if isinstance(value, (str, int, float, bool)):
+    if isinstance(value, (str, int, float, bool)): #если значение является строкой, числом, булевым значением, возвращаем его как есть
         return value
-    if isinstance(value, uuid.UUID):
+    if isinstance(value, uuid.UUID): #если значение является UUID, преобразуем его в строку
         return str(value)
-    if isinstance(value, (datetime, date)):
+    if isinstance(value, (datetime, date)): #если значение является датой или временем, преобразуем его в ISO-формат
         return value.isoformat()
-    if isinstance(value, dict):
+    if isinstance(value, dict): #если значение является словарем, преобразуем его в словарь
         return {str(k): _to_jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, (list, tuple, set)): #если значение является списком, кортежем или множеством, преобразуем его в список
         return [_to_jsonable(v) for v in value]
     return str(value)
 
 
-def dumps_user_export(data: dict[str, Any]) -> str:
+def dumps_user_export(data: dict[str, Any]) -> str: #сериализует данные в человекочитаемый JSON
     """
     Сериализует экспорт в человекочитаемый JSON:
     - ensure_ascii=False (кириллица без экранирования)
     - indent=2
     - ISO-формат дат/времени
     """
-    return json.dumps(data, ensure_ascii=False, indent=2, default=_to_jsonable)
+    return json.dumps(data, ensure_ascii=False, indent=2, default=_to_jsonable) #сериализуем данные в JSON
 
 
-def _serialize_user(u: User) -> dict[str, Any]:
+def _serialize_user(u: User) -> dict[str, Any]: #сериализует пользователя в словарь
     return {
         "id": str(u.id),
         "telegram_user_id": int(u.telegram_user_id),
@@ -51,7 +51,7 @@ def _serialize_user(u: User) -> dict[str, Any]:
     }
 
 
-def _serialize_daily_checkin(d: DailyCheckIn) -> dict[str, Any]:
+def _serialize_daily_checkin(d: DailyCheckIn) -> dict[str, Any]: #сериализует daily check-in в словарь
     return {
         "id": str(d.id),
         "checkin_date": d.checkin_date,
@@ -65,7 +65,7 @@ def _serialize_daily_checkin(d: DailyCheckIn) -> dict[str, Any]:
     }
 
 
-def _serialize_future_message(m: FutureMessage) -> dict[str, Any]:
+def _serialize_future_message(m: FutureMessage) -> dict[str, Any]: #сериализует запланированное сообщение в словарь
     return {
         "id": str(m.id),
         "message_text": m.message_text,
@@ -78,7 +78,7 @@ def _serialize_future_message(m: FutureMessage) -> dict[str, Any]:
     }
 
 
-def _serialize_plan_state(s: UserPlanState) -> dict[str, Any]:
+def _serialize_plan_state(s: UserPlanState) -> dict[str, Any]: #сериализует состояние планов в словарь
     return {
         "id": str(s.id),
         "mode": s.mode,
@@ -89,7 +89,7 @@ def _serialize_plan_state(s: UserPlanState) -> dict[str, Any]:
     }
 
 
-def _serialize_plan(p: Plan) -> dict[str, Any]:
+def _serialize_plan(p: Plan) -> dict[str, Any]: #сериализует план в словарь
     followup: Optional[dict[str, Any]] = None
     if p.followup is not None:
         followup = {
@@ -112,23 +112,23 @@ def _serialize_plan(p: Plan) -> dict[str, Any]:
     }
 
 
-async def build_user_export_payload(telegram_user_id: int) -> dict[str, Any]:
+async def build_user_export_payload(telegram_user_id: int) -> dict[str, Any]: #строит payload для экспорта данных пользователя
     async with session_scope() as session:
         user = (
             await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
-        ).scalar_one_or_none()
+        ).scalar_one_or_none() #получаем пользователя из БД
         if user is None:
-            raise ValueError(f"User not found: telegram_user_id={telegram_user_id}")
+            raise ValueError(f"User not found: telegram_user_id={telegram_user_id}") #если пользователь не найден, выбрасываем ошибку
 
-        daily_checkins = (
+        daily_checkins = ( #получаем все daily check-ins для пользователя из БД
             await session.execute(
                 select(DailyCheckIn)
                 .where(DailyCheckIn.user_id == user.id)
                 .order_by(DailyCheckIn.checkin_date.asc())
             )
-        ).scalars().all()
+        ).scalars().all() #.scalars().all() - получаем все результаты запроса в виде списка
 
-        plans = (
+        plans = ( #получаем все планы для пользователя из БД
             await session.execute(
                 select(Plan)
                 .options(selectinload(Plan.followup))
@@ -137,15 +137,15 @@ async def build_user_export_payload(telegram_user_id: int) -> dict[str, Any]:
             )
         ).scalars().all()
 
-        future_messages = (
+        future_messages = ( #получаем все запланированные сообщения для пользователя из БД
             await session.execute(
                 select(FutureMessage)
                 .where(FutureMessage.user_id == user.id)
                 .order_by(FutureMessage.scheduled_for.asc())
             )
-        ).scalars().all()
+        ).scalars().all() 
 
-        plan_state = (
+        plan_state = ( #получаем состояние планов для пользователя из БД
             await session.execute(select(UserPlanState).where(UserPlanState.user_id == user.id))
         ).scalar_one_or_none()
 

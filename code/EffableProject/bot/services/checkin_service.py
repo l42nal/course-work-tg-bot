@@ -60,7 +60,7 @@ async def handle_checkin_and_plans_flow(
     if not text:
         return CheckinResult(handled=False)
 
-    daily = await crud.get_daily_checkin(telegram_user_id, today)
+    daily = await crud.get_daily_checkin(telegram_user_id, today) #получаем данные о daily check-in для пользователя и даты
 
     # 1) Пользователь отвечает на вопрос "Оцени день 1..10"
     if daily is not None and daily.status == "sent" and daily.mood_score is None:

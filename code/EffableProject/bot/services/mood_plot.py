@@ -8,12 +8,12 @@ from datetime import date
 
 
 @dataclass(frozen=True)
-class MonthMoodPoint:
+class MonthMoodPoint: #класс для хранения точки на графике настроения
     day: date
     score: int
 
 
-_RU_MONTHS = {
+_RU_MONTHS = { #словарь для перевода месяцев на русский язык
     1: "январь",
     2: "февраль",
     3: "март",
@@ -29,7 +29,7 @@ _RU_MONTHS = {
 }
 
 
-def build_month_mood_plot_png(
+def build_month_mood_plot_png( #строит график настроения для текущего месяца
     points: list[MonthMoodPoint],
     *,
     year: int,
@@ -43,7 +43,7 @@ def build_month_mood_plot_png(
         return None
 
     # Import inside to avoid requiring matplotlib for non-plot use-cases.
-    os.environ.setdefault("MPLCONFIGDIR", tempfile.mkdtemp(prefix="mplconfig_"))
+    os.environ.setdefault("MPLCONFIGDIR", tempfile.mkdtemp(prefix="mplconfig_")) #создаем временную директорию для конфигурации matplotlib
     import matplotlib
 
     matplotlib.use("Agg")
@@ -57,7 +57,7 @@ def build_month_mood_plot_png(
     except Exception:
         pass
 
-    fig, ax = plt.subplots(figsize=(10, 4.2), dpi=160)
+    fig, ax = plt.subplots(figsize=(10, 4.2), dpi=160) #создаем график
     ax.plot(
         days,
         scores,

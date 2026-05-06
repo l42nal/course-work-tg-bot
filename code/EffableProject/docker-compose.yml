@@ -25,8 +25,6 @@ services:
     env_file:
       - .env
     environment:
-      # Важно: внутри сети compose хост БД — имя сервиса `postgres`, не localhost.
-      # Переопределяет DATABASE_URL из .env (там часто localhost для локального запуска).
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/effable_bot
     depends_on:
       postgres:
