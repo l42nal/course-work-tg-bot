@@ -16,6 +16,7 @@ from ..services.mood_plot import MonthMoodPoint, build_month_mood_plot_png
 from ..services.stats_service import format_mood_stats_text, get_user_mood_stats
 from ..services.user_data_service import reset_user_data
 from ..services.scheduler_service import schedule_message
+from .daily_settings import start_daily_settings_flow
 from .remind import start_remind_flow
 
 logger = logging.getLogger(__name__) #инициализируем логгер
@@ -49,6 +50,7 @@ async def try_handle_command( #асинхронная функция для об
             "/reset — удалить данные и начать заново\n"
             "/remind — отправить сообщение себе в будущее"
         )
+        await start_daily_settings_flow(message, telegram_user_id)
         return True
 
     # /reset — полностью удалить данные пользователя из БД

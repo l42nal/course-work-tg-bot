@@ -14,16 +14,19 @@ from typing import Set
 #импорты aiogram, dispatcher - регистриует обработчики сообщений и команд
 from aiogram import Bot, Dispatcher
 from aiogram.types import FSInputFile, Message
+from aiogram import F
 from dotenv import load_dotenv
 
 from .db import crud
 from .llm import get_response, init_llm
 from .handlers.commands import try_handle_command
+from .handlers.daily_settings import handle_daily_settings_callback
 from .handlers.remind import handle_remind_callback, try_handle_remind_message
 from .services.checkin_service import handle_checkin_and_plans_flow
 from .services.scheduler_service import init_scheduler, schedule_message
 from .db.session import (
     ensure_users_telegram_id_bigint,
+    ensure_user_daily_settings_table,
     init_engine,
     load_known_user_ids,
     ping_db,
@@ -102,6 +105,7 @@ async def main() -> None: #точка входа: инициализация б�
 
     await ping_db()
     await ensure_users_telegram_id_bigint() #убеждаемся, что ID пользователей в базе данных BIGINT (связано с возникавшим багом)
+    await ensure_user_daily_settings_table()
 
     # Загружаем ранее известных пользователей из БД, чтобы планировщик
     # работал после перезапуска процесса.
@@ -111,12 +115,13 @@ async def main() -> None: #точка входа: инициализация б�
     dp = Dispatcher() #инициализируем диспетчер
 
     dp.message.register(handle_any_message) #регистрируем обработчик любого входящего сообщения
-    dp.callback_query.register(handle_remind_callback)
+    dp.callback_query.register(handle_remind_callback, F.data.startswith("remind:"))
+    dp.callback_query.register(handle_daily_settings_callback, F.data.startswith(("start_tz:", "start_hour:")))
 
     scheduler_service = init_scheduler(bot) #инициализируем планировщик
     try:
         await scheduler_service.start()
-        scheduler_service.register_daily_checkin_job() #регистрируем ежедневный check-in
+        await scheduler_service.register_daily_checkin_jobs()
         await scheduler_service.restore_pending_messages()
         await dp.start_polling(bot) #запускаем бота
     finally:

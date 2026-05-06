@@ -7,7 +7,7 @@ from typing import Optional
 
 from sqlalchemy import select
 
-from .models import DailyCheckIn, FutureMessage, Plan, PlanFollowUp, User, UserPlanState
+from .models import DailyCheckIn, FutureMessage, Plan, PlanFollowUp, User, UserDailySettings, UserPlanState
 from .session import session_scope
 
 
@@ -38,6 +38,12 @@ class DailyCheckInData:
 class MoodScoreRow:
     day: date
     score: int
+
+
+@dataclass(frozen=True)
+class DailySettingsData:
+    timezone_offset_hours: int
+    daily_checkin_hour_local: int
 
 
 async def list_mood_scores(telegram_user_id: int) -> list[MoodScoreRow]:
@@ -199,6 +205,85 @@ async def mark_future_message_sent(message_id: uuid.UUID, sent_at: Optional[date
         fm.status = "sent"
         fm.sent_at = sent_at
         await session.commit()
+
+
+async def upsert_user_daily_settings(
+    telegram_user_id: int,
+    *,
+    timezone_offset_hours: int,
+    daily_checkin_hour_local: int,
+) -> None:
+    if timezone_offset_hours < 0 or timezone_offset_hours > 23:
+        raise ValueError("timezone_offset_hours must be in range 0..23")
+    if daily_checkin_hour_local < 0 or daily_checkin_hour_local > 23:
+        raise ValueError("daily_checkin_hour_local must be in range 0..23")
+
+    async with session_scope() as session:
+        user = (
+            await session.execute(select(User).where(User.telegram_user_id == telegram_user_id))
+        ).scalar_one_or_none()
+        if user is None:
+            raise ValueError(f"User not found: telegram_user_id={telegram_user_id}")
+
+        settings = (
+            await session.execute(select(UserDailySettings).where(UserDailySettings.user_id == user.id))
+        ).scalar_one_or_none()
+
+        if settings is None:
+            settings = UserDailySettings(
+                user_id=user.id,
+                timezone_offset_hours=int(timezone_offset_hours),
+                daily_checkin_hour_local=int(daily_checkin_hour_local),
+            )
+            session.add(settings)
+        else:
+            settings.timezone_offset_hours = int(timezone_offset_hours)
+            settings.daily_checkin_hour_local = int(daily_checkin_hour_local)
+
+        await session.commit()
+
+
+async def get_user_daily_settings(telegram_user_id: int) -> DailySettingsData | None:
+    async with session_scope() as session:
+        row = (
+            await session.execute(
+                select(
+                    UserDailySettings.timezone_offset_hours,
+                    UserDailySettings.daily_checkin_hour_local,
+                )
+                .join(User, User.id == UserDailySettings.user_id)
+                .where(User.telegram_user_id == telegram_user_id)
+            )
+        ).one_or_none()
+
+        if row is None:
+            return None
+
+        return DailySettingsData(
+            timezone_offset_hours=int(row[0]),
+            daily_checkin_hour_local=int(row[1]),
+        )
+
+
+async def list_user_daily_settings() -> list[tuple[int, int, int]]:
+    """
+    Возвращает список настроек в формате:
+    (telegram_user_id, timezone_offset_hours, daily_checkin_hour_local)
+    """
+    async with session_scope() as session:
+        rows = (
+            await session.execute(
+                select(
+                    User.telegram_user_id,
+                    UserDailySettings.timezone_offset_hours,
+                    UserDailySettings.daily_checkin_hour_local,
+                )
+                .join(UserDailySettings, UserDailySettings.user_id == User.id)
+                .order_by(User.telegram_user_id.asc())
+            )
+        ).all()
+
+    return [(int(r[0]), int(r[1]), int(r[2])) for r in rows]
 
 
 async def get_plan_state(telegram_user_id: int) -> PlanStateData:

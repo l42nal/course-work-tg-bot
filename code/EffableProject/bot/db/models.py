@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -48,6 +49,11 @@ class User(Base):
     daily_checkins: Mapped[list["DailyCheckIn"]] = relationship(back_populates="user", lazy="selectin")
     plans: Mapped[list["Plan"]] = relationship(back_populates="user", lazy="selectin")
     plan_state: Mapped[Optional["UserPlanState"]] = relationship(
+        back_populates="user",
+        lazy="selectin",
+        uselist=False,
+    )
+    daily_settings: Mapped[Optional["UserDailySettings"]] = relationship(
         back_populates="user",
         lazy="selectin",
         uselist=False,
@@ -190,4 +196,36 @@ class UserPlanState(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="plan_state")
+
+
+class UserDailySettings(Base):
+    __tablename__ = "user_daily_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "timezone_offset_hours >= 0 AND timezone_offset_hours <= 23",
+            name="ck_user_daily_settings_tz_offset_0_23",
+        ),
+        CheckConstraint(
+            "daily_checkin_hour_local >= 0 AND daily_checkin_hour_local <= 23",
+            name="ck_user_daily_settings_hour_0_23",
+        ),
+    )
+
+    # 1-to-1 с users: primary key == user_id.
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    timezone_offset_hours: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    daily_checkin_hour_local: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    updated_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    user: Mapped["User"] = relationship(back_populates="daily_settings")
 

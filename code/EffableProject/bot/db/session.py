@@ -102,6 +102,47 @@ async def ensure_users_telegram_id_bigint() -> None:
                 )
 
 
+async def ensure_user_daily_settings_table() -> None:
+    """
+    Создаёт таблицу `user_daily_settings`, если её ещё нет.
+    Делаем это явным DDL, чтобы функциональность работала без ручного прогона миграций.
+    """
+    async with session_scope() as session:
+        async with session.begin():
+            row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                          AND table_name = 'user_daily_settings'
+                        """
+                    )
+                )
+            ).one_or_none()
+
+            if row is not None:
+                return
+
+            await session.execute(
+                text(
+                    """
+                    CREATE TABLE public.user_daily_settings (
+                      user_id UUID PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+                      timezone_offset_hours SMALLINT NOT NULL,
+                      daily_checkin_hour_local SMALLINT NOT NULL,
+                      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                      CONSTRAINT ck_user_daily_settings_tz_offset_0_23
+                        CHECK (timezone_offset_hours >= 0 AND timezone_offset_hours <= 23),
+                      CONSTRAINT ck_user_daily_settings_hour_0_23
+                        CHECK (daily_checkin_hour_local >= 0 AND daily_checkin_hour_local <= 23)
+                    )
+                    """
+                )
+            )
+
+
 async def upsert_user(
     telegram_user_id: int,
     first_name: Optional[str],
