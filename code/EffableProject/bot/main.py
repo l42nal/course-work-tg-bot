@@ -21,6 +21,7 @@ from .db import crud
 from .llm import get_response, init_llm
 from .handlers.commands import try_handle_command
 from .handlers.daily_settings import handle_daily_settings_callback
+from .handlers.import_data import try_handle_import_message
 from .handlers.remind import handle_remind_callback, try_handle_remind_message
 from .services.checkin_service import handle_checkin_and_plans_flow
 from .services.scheduler_service import init_scheduler, schedule_message
@@ -63,11 +64,16 @@ async def handle_any_message(message: Message) -> None: #асинхронная 
     )
     known_users.add(user_id)
 
+    today = datetime.now().date()
+
+    # Если пользователь в сценарии /import — перехватываем сообщение здесь,
+    # чтобы document не ушёл в другие сценарии/LLM.
+    if await try_handle_import_message(message, telegram_user_id=user_id):
+        return
+
     user_text = message.text or ""
     if not user_text.strip():
         return
-
-    today = datetime.now().date()
 
     # Если пользователь в сценарии /remind — перехватываем сообщение здесь,
     # чтобы оно не ушло в другие сценарии (check-in/LLM).

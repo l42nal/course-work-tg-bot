@@ -159,6 +159,14 @@ class SchedulerService:
         )
         logger.info("Scheduler job registered id=%s run_date_utc=%s", job_id, send_at_utc.isoformat())
 
+    def register_message_job(self, message_id: uuid.UUID, send_at: datetime) -> None:
+        """
+        Публичный метод для регистрации уже существующего сообщения (которое уже лежит в БД).
+
+        Нужен для сценариев восстановления данных (например, /import), чтобы не ждать перезапуска бота.
+        """
+        self._register_message_job(message_id, send_at)
+
     async def _execute_scheduled_message(self, message_id: uuid.UUID) -> None:
         """
         Исполнитель джобы.
