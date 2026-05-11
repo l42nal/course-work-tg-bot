@@ -19,6 +19,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from .types import EncryptedText
+
 
 class Base(DeclarativeBase):
     pass
@@ -66,7 +68,7 @@ class FutureMessage(Base):
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    message_text: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
     scheduled_for: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
     # scheduled | sent | cancelled
@@ -128,8 +130,8 @@ class Plan(Base):
     # Для какой даты пользователь формулировал планы (обычно "завтра").
     for_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
-    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
-    summary_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_text: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
+    summary_text: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
 
     # planned | cancelled | completed (опционально)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned", index=True)
@@ -157,8 +159,8 @@ class PlanFollowUp(Base):
     plan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("plans.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
 
     # Текст ответа пользователя "как прошли планы".
-    response_text: Mapped[str] = mapped_column(Text, nullable=False)
-    summary_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    response_text: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
+    summary_text: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
 
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="submitted", index=True)
 
@@ -185,8 +187,8 @@ class UserPlanState(Base):
 
     # Храним только последний план пользователя.
     last_plan_for_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    last_plan_raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    last_plan_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_plan_raw_text: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
+    last_plan_summary: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
 
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True),

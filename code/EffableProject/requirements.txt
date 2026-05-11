@@ -7,3 +7,4 @@ alembic
 greenlet
 APScheduler
 matplotlib
+cryptography
